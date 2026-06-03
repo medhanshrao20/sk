@@ -1,0 +1,62 @@
+The wind_forecast/ pipeline is in place under your workspace. Here is what was built and how to run it.
+
+Project layout
+wind_forecast/
+├── data/                    ← place hourly.csv here (+ loader, features, splitter)
+├── main.py                  ← runs all 4 seasons (or subset via CLI)
+├── config.py
+├── models/                  ← forecasters, tuning, stacking, saved/{season}/
+├── evaluation/              ← backtesting, metrics, probabilistic
+├── explainability/          ← SHAP
+├── plots/                   ← 10 PNGs per season
+└── results/                 ← metrics, plots, production forecasts
+Note: Your spec lists data/ twice (CSV vs Python modules). Both live under data/: hourly.csv next to loader.py, features.py, splitter.py, with data/__init__.py as the package.
+
+Before running
+Put your dataset at wind_forecast/data/hourly.csv (folder is empty except .gitkeep).
+Install dependencies:
+pip install -r wind_forecast/requirements.txt
+Expected target/exog columns: WS, WD, AT, RH, ET, SR, VP, DPT, PCP, ST, plus a datetime column (or CIMIS-style Date + Hour (PST) — auto-mapped in loader.py).
+Run
+cd wind_forecast
+python main.py              # all seasons, 20 Bayesian trials per tunable model
+python main.py --fast       # 2 trials (smoke test)
+python main.py --season spring summer   # subset of seasons
+python main.py --strict     # stop on first error (default: log and continue)
+
+Overnight / unattended:
+- By default, errors are appended to results/pipeline_errors.log and the run
+  continues with the next model step or season.
+- Use --strict only if you want the old fail-fast behaviour.
+Spring was validated end-to-end in fast mode (tuning → validation → test → probabilistic → SHAP → plots → save → production).
+
+skforecast 0.22 alignment
+The implementation follows current skforecast docs (installed: 0.22.0):
+
+Your spec	Implementation
+regressor=
+estimator= (0.22 API)
+skopt + param_grid
+Optuna search_space with the same ranges (scikit-optimize still in requirements.txt for compatibility)
+set_last_window()
+predict(..., last_window=...)
+set_out_sample_residuals(residuals=...)
+set_out_sample_residuals(y_true=..., y_pred=...)
+RollingFeatures 4 stats × 3 windows
+Three RollingFeatures objects (4 stats each, paired 1:1 with window size per skforecast rules)
+Pipeline steps (per season)
+Load → cyclical features → season split → 70/15/15 chronological split
+Build forecasters A–H (LGBM recursive/direct, equivalent-date baseline, quantile pair, XGB, Ridge, RF, stacking)
+Bayesian tuning on train (A, B, E, F, G)
+Validation backtesting on train+val with TimeSeriesFold
+Test backtesting for best model (+ baseline C)
+Bootstrap / conformal / quantile intervals on test
+SHAP (4 plots + CSV)
+Ten diagnostic PNGs
+Master CSV/heatmap after all seasons
+joblib under models/saved/{season}/
+Production 24h forecast CSV
+Outputs
+Per season: results/{season}/{tuning,validation,test,probabilistic,shap,plots,production}/
+Global: results/MASTER_METRICS_ALL_SEASONS.csv and .png
+Copy your existing file from SK/data/hourly.csv into wind_forecast/data/hourly.csv (with WS/WD/… columns or CIMIS headers), then run python main.py. A full four-season run with n_trials=20 will take substantial time; use --fast first to confirm the environment.
